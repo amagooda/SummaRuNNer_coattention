@@ -6,7 +6,7 @@ import os
 import pickle
 from tqdm import tqdm as tqdm_notebook
 import torch
-
+import rake
 
 def read_github_data(data_file_path, use_back_translation=False, back_translation_file=None):
     train_data = []
@@ -485,7 +485,7 @@ def read_cnn_dm_data(data_parent_dir, limit_vocab=70000, use_back_translation=Fa
     return train_data, val_data, test_data, word2id_dictionary, id2word_dictionary
 
 
-def tokenize_data(data, use_back_translation=False):#, max_num_sentences=None, max_sentence_length=None):
+def tokenize_data(data, use_back_translation=False, extract_keywords=False):#, max_num_sentences=None, max_sentence_length=None):
     all_comments = []
     all_posts = []
     all_answers = []
@@ -493,6 +493,11 @@ def tokenize_data(data, use_back_translation=False):#, max_num_sentences=None, m
     
     all_comments_translated = []
     all_posts_translated = []
+
+    all_comment_keywords = []
+    all_post_keywords = []
+    if extract_keywords is True:
+        rake_extractor = rake.Rake('./SmartStoplist.txt')
 
     print('Tokenizing Data...')
     for i in tqdm_notebook(range(0, len(data))):
@@ -515,6 +520,36 @@ def tokenize_data(data, use_back_translation=False):#, max_num_sentences=None, m
             all_comments_translated.append(comments_translated)
             all_posts_translated.append(post_translated)
 
+        if extract_keywords:
+            temp_comment_list = []
+            for comment in comments:
+                comment_str = ' '.join(comment)
+                key_words = rake_extractor.run(comment_str)
+                words = []
+                for key_word in key_words:
+                    if key_word[1] <= 1:
+                        continue
+                    words += key_word[0].split()
+                if len(words) == 0:
+                    words = comment
+                temp_comment_list.append(words)
+
+            temp_post_list = []
+            for post_elem in post:
+                post_str = ' '.join(post_elem)
+                key_words = rake_extractor.run(post_str)
+                words = []
+                for key_word in key_words:
+                    if key_word[1] <= 1:
+                        continue
+                    words += key_word[0].split()
+                if len(words) == 0:
+                    words = comment
+                temp_post_list.append(words)
+
+            all_comment_keywords.append(temp_comment_list)#[rake_extractor.run(' '.join(x)) for x in comments])
+            all_post_keywords.append(temp_post_list)#[rake_extractor.run(' '.join(x)) for x in post])
+
         all_answers.append(answers)
         all_comments.append(comments)
         all_posts.append(post)
@@ -522,12 +557,13 @@ def tokenize_data(data, use_back_translation=False):#, max_num_sentences=None, m
         
     if use_back_translation is True:
         return all_posts, all_comments, all_answers, all_human_summaries, all_posts_translated, all_comments_translated
-    else:
-        return all_posts, all_comments, all_answers, all_human_summaries
+    if extract_keywords:
+        return all_posts, all_comments, all_answers, all_human_summaries, all_post_keywords, all_comment_keywords
+    return all_posts, all_comments, all_answers, all_human_summaries
 
 
 def batchify_data(all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, batch_size,
-                  use_back_translation=False, all_posts_translated=None, all_comments_translated=None):
+                  use_back_translation=False, all_posts_translated=None, all_comments_translated=None, extract_keywords=False, all_post_keywords=None, all_comment_keywords=None):
     comments_batches = []
     posts_batches = []
     answer_batches = []
@@ -536,6 +572,9 @@ def batchify_data(all_posts, all_comments, all_answers, all_human_summaries, all
 
     posts_translated_batches = []
     comments_translated_batches = []
+
+    post_keywords_batches = []
+    comment_keywords_batches = []
 
     print('Batchifying Data...')
     for i in tqdm_notebook(range(0, len(all_posts), batch_size)):
@@ -547,6 +586,9 @@ def batchify_data(all_posts, all_comments, all_answers, all_human_summaries, all
 
         comments_translated_batch = []
         posts_translated_batch = []
+
+        comment_keywords_batch = []
+        post_keywords_batch = []
 
         for j in range(i, i + batch_size):
             if j < len(all_posts):
@@ -567,6 +609,9 @@ def batchify_data(all_posts, all_comments, all_answers, all_human_summaries, all
                 if use_back_translation is True and all_posts_translated is not None and all_comments_translated is not None:
                     comments_translated_batch.append(all_comments_translated[j])
                     posts_translated_batch.append(all_posts_translated[j])
+                if extract_keywords is True and all_post_keywords is not None and all_comment_keywords is not None:
+                    comment_keywords_batch.append(all_comment_keywords[j])
+                    post_keywords_batch.append(all_post_keywords[j])
 
         comments_batches.append(comments_batch)
         posts_batches.append(post_batch)
@@ -577,9 +622,14 @@ def batchify_data(all_posts, all_comments, all_answers, all_human_summaries, all
         if use_back_translation is True and all_posts_translated is not None and all_comments_translated is not None:
             comments_translated_batches.append(comments_translated_batch)
             posts_translated_batches.append(posts_translated_batch)
+        if extract_keywords is True and all_post_keywords is not None and all_comment_keywords is not None:
+            post_keywords_batches.append(post_keywords_batch)
+            comment_keywords_batches.append(comment_keywords_batch)
 
     if use_back_translation is True and all_posts_translated is not None and all_comments_translated is not None:
         return posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches, posts_translated_batches, comments_translated_batches
+    if extract_keywords is True and all_post_keywords is not None and all_comment_keywords is not None:
+        return posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches
     else:
         return posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches
 

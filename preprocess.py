@@ -31,8 +31,9 @@ params['Global_max_sequence_length'] = 25
 params['Global_max_num_sentences'] = 20
 params['use_external_vocab'] = False
 params['external_vocab_file'] = './checkpoint/forum_vocab.pickle'
-params['encoding_batch_size'] = 64
+params['encoding_batch_size'] = 16
 params['data_split_size'] = 15000
+params['extract_keywords'] = True
 ############ device
 params['device'] = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 ######################################################
@@ -90,19 +91,26 @@ def tokenize_data(data, data_part):
 
     all_posts_translated = None
     all_comments_translated = None
+
+    all_post_keywords = None
+    all_comment_keywords = None
+
     if os.path.exists(file_path):
         print('Loading saved tokenized data from {}'.format(file_path))
         with open(file_path, "rb") as output_file:
             if params['use_back_translation'] is True:
                 [all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated] = pickle.load(output_file)
+            elif params['extract_keywords'] is True:
+                [all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_post_keywords, all_comment_keywords] = pickle.load(output_file)
             else:
                 [all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str] = pickle.load(output_file)
     else:
         if params['use_back_translation'] is True:
             all_posts, all_comments, all_answers, all_human_summaries, all_posts_translated, all_comments_translated = dL.tokenize_data(data, use_back_translation=True)
+        elif params['extract_keywords'] is True:
+            all_posts, all_comments, all_answers, all_human_summaries, all_post_keywords, all_comment_keywords = dL.tokenize_data(data, use_back_translation=False, extract_keywords=True)
         else:
             all_posts, all_comments, all_answers, all_human_summaries = dL.tokenize_data(data)
-
 
         all_sentence_str = []
         for index, comment in enumerate(all_comments):
@@ -110,16 +118,19 @@ def tokenize_data(data, data_part):
 
         if params['use_back_translation'] is True:
             save_list = [all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated]
+        elif params['extract_keywords'] is True:
+            save_list = [all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_post_keywords, all_comment_keywords]
         else:
             save_list = [all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str]
+
         print('Saving tokenized data')
         with open(file_path, "wb") as output_file:
             pickle.dump(save_list, output_file)
 
-    return all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated
+    return all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated, all_post_keywords, all_comment_keywords
 
 
-def encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated, word2id_dictionary, data_part):
+def encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated, word2id_dictionary, data_part, all_post_keywords=None, all_comment_keywords=None):
     use_BERT = params['use_BERT']
     encoding_batch_size = params['encoding_batch_size']
     split_size = params['data_split_size']
@@ -147,6 +158,9 @@ def encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_s
         if params['use_back_translation'] is True:
             all_posts_translated_part = all_posts_translated[start: end]
             all_comments_translated_part = all_comments_translated[start: end]
+        if params['extract_keywords'] is True and all_post_keywords is not None and all_comment_keywords is not None:
+            all_post_keywords_part = all_post_keywords[start: end]
+            all_comment_keywords_part = all_comment_keywords[start: end]
 
         if use_BERT is True:
             all_comments_part = dL.encode_data_BERT(all_comments_part, params['BERT_Model_Path'], params['device'], params['BERT_layers'], encoding_batch_size)
@@ -154,17 +168,25 @@ def encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_s
             if params['use_back_translation'] is True:
                 all_comments_translated_part = dL.encode_data_BERT(all_comments_translated_part, params['BERT_Model_Path'], params['device'], params['BERT_layers'], encoding_batch_size)
                 all_posts_translated_part = dL.encode_data_BERT(all_posts_translated_part, params['BERT_Model_Path'], params['device'], params['BERT_layers'], encoding_batch_size)
+            if params['extract_keywords'] is True:
+                all_comment_keywords_part = dL.encode_data_BERT(all_comment_keywords_part, params['BERT_Model_Path'], params['device'], params['BERT_layers'], encoding_batch_size)
+                all_post_keywords_part = dL.encode_data_BERT(all_post_keywords_part, params['BERT_Model_Path'], params['device'], params['BERT_layers'], encoding_batch_size)
 
         else:
             all_comments_part = dL.encode_data(all_comments_part, word2id_dictionary)
             all_posts_part = dL.encode_data(all_posts_part, word2id_dictionary)
             if params['use_back_translation'] is True:
                 all_comments_translated_part = dL.encode_data(all_comments_translated_part, word2id_dictionary)
-                all_posts_translated_part = dL.encode_data(all_posts_translated_part, params['BERT_Model_Path'], word2id_dictionary)
+                all_posts_translated_part = dL.encode_data(all_posts_translated_part, word2id_dictionary)
+            if params['extract_keywords'] is True:
+                all_comment_keywords_part = dL.encode_data(all_comment_keywords_part, word2id_dictionary)
+                all_post_keywords_part = dL.encode_data(all_post_keywords_part, word2id_dictionary)
 
         ####### Saving Data
         if params['use_back_translation'] is True:
             save_list = [all_posts_part, all_comments_part, all_answers_part, all_human_summaries_part, all_sentence_str_part, all_posts_translated_part, all_comments_translated_part]
+        elif params['extract_keywords'] is True:
+            save_list = [all_posts_part, all_comments_part, all_answers_part, all_human_summaries_part, all_sentence_str_part, all_post_keywords_part, all_comment_keywords_part]
         else:
             save_list = [all_posts_part, all_comments_part, all_answers_part, all_human_summaries_part, all_sentence_str_part]
 
@@ -193,6 +215,9 @@ def encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_s
             if params['use_back_translation'] is True:
                 all_posts_translated[j] = None
                 all_comments_translated[j] = None
+            if params['extract_keywords'] is True:
+                all_post_keywords[j] = None
+                all_comment_keywords[j] = None
             all_posts[j] = None
             all_comments[j] = None
             all_human_summaries[j] = None
@@ -229,7 +254,7 @@ def main():
         print('Processing {}'.format(data_part))
         with open(file_name.replace('@dpart@', data_part), "rb") as output_file:
             data = pickle.load(output_file)
-        all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated = tokenize_data(data, data_part)
+        all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated, all_post_keywords, all_comment_keywords = tokenize_data(data, data_part)
         del data
 
         '''
@@ -250,6 +275,9 @@ def main():
             if params['use_back_translation'] is True:
                 for index, comment in enumerate(all_comments_translated):
                     all_comments_translated[index] = all_comments_translated[index][:max_num_sentences]
+            if params['extract_keywords'] is True:
+                for index, comment in enumerate(all_comment_keywords):
+                    all_comment_keywords[index] = all_comment_keywords[index][:max_num_sentences]
 
         if max_sentence_length is not None:
             for index, comment in enumerate(all_comments):
@@ -261,20 +289,25 @@ def main():
                     for index_2, sent in enumerate(comment):
                         all_comments_translated[index][index_2] = all_comments_translated[index][index_2][:max_sentence_length]
 
-        encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated, word2id_dictionary, data_part)
+            if params['extract_keywords'] is True:
+                for index, comment in enumerate(all_comment_keywords):
+                    for index_2, sent in enumerate(comment):
+                        all_comment_keywords[index][index_2] = all_comment_keywords[index][index_2][:max_sentence_length]
+
+        encode_data(all_posts, all_comments, all_answers, all_human_summaries, all_sentence_str, all_posts_translated, all_comments_translated, word2id_dictionary, data_part, all_post_keywords, all_comment_keywords)
 
 
 if __name__ == '__main__':
     ######################################################
-    for dsn in ['forum', 'github', 'cnn']:
-        for i in [20, 30, 40, 50]:
-            for j in [25, 35, 55, 75]:
-                for ub in [True, False]:
+    for dsn in ['forum_keywords']:#, 'github', 'cnn']:
+        for i in [30]:#[20, 30, 40, 50]:
+            for j in [75]:#[25, 35, 55, 75]:
+                for ub in [False, True]:
                     if dsn == 'github':
                         params['DATA_Path'] = './github_data/issues_v2_combined.xml'
                     elif dsn == 'cnn':
                         params['DATA_Path'] = './cnn_data/finished_files/'
-                    elif dsn == 'forum':
+                    elif dsn == 'forum' or dsn == 'forum_keywords':
                         params['DATA_Path'] = './forum_data/data_V2/Parsed_Data.xml'
 
                     params['data_set_name'] = dsn
@@ -283,7 +316,7 @@ if __name__ == '__main__':
                     params['Global_max_num_sentences'] = i
                     # try:
                     if ub is True:
-                        for blyaers in [[-1]]:
+                        for blyaers in [[-1, -2]]:
                             params['BERT_layers'] = blyaers
                             print('{} {} {} {} {}'.format(i, j, ub, dsn, blyaers))
                             main()

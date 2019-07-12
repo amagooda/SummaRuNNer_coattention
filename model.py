@@ -30,7 +30,7 @@ class EncoderBiRNN(nn.Module):
     def __init__(self, batch_size, vocab_size, embedding_size,
                  hidden_size, max_num_sentence=360, device=None,
                  pretrained_embeddings=None, pretrained_path=None, use_bert=False,
-                 num_bert_layers=3, bert_embedding_size=768, use_coattention=True):
+                 num_bert_layers=3, bert_embedding_size=768, use_coattention=True, use_keywords=True):
         super(EncoderBiRNN, self).__init__()
         self.num_documents_dim = 0
         self.num_sentences_dim = 1
@@ -45,6 +45,7 @@ class EncoderBiRNN(nn.Module):
 
         self.use_BERT = use_bert
         self.use_coattention = use_coattention
+        self.use_keywords = use_keywords
 
         self.layers = []
 
@@ -68,14 +69,28 @@ class EncoderBiRNN(nn.Module):
             #   2.    /sentence and doc embedding layers
             self.word_BiLSTM = nn.LSTM(input_size=embedding_size, hidden_size= hidden_size, bidirectional=True, batch_first=True)
             self.sentence_BiLSTM = nn.LSTM(input_size=2 * hidden_size, hidden_size= hidden_size, bidirectional=True, batch_first=True)
+
             self.layers.append(self.word_BiLSTM)
             self.layers.append(self.sentence_BiLSTM)
 
+        ############# Highway#########################
+        if use_keywords is True:
+            self.highway_linear_1 = nn.Sequential(Linear(self.hidden_size * 4, self.hidden_size * 4), nn.ReLU())
+            self.highway_linear_2 = nn.Sequential(Linear(self.hidden_size * 4, self.hidden_size * 4), nn.ReLU())
+            self.highway_gate_1 = nn.Sequential(Linear(self.hidden_size * 4, self.hidden_size * 4), nn.Sigmoid())
+            self.highway_gate_2 = nn.Sequential(Linear(self.hidden_size * 4, self.hidden_size * 4), nn.Sigmoid())
+        ####################################################
+
         if self.use_coattention is True:
-            #   3. Attention Flow Layer
-            self.att_weight_c = Linear(hidden_size * 2, 1)
-            self.att_weight_q = Linear(hidden_size * 2, 1)
-            self.att_weight_cq = Linear(hidden_size * 2, 1)
+            if use_keywords is False:
+                #   3. Attention Flow Layer
+                self.att_weight_c = Linear(hidden_size * 2, 1)
+                self.att_weight_q = Linear(hidden_size * 2, 1)
+                self.att_weight_cq = Linear(hidden_size * 2, 1)
+            elif use_keywords is True:
+                self.att_weight_c = Linear(hidden_size * 4, 1)
+                self.att_weight_q = Linear(hidden_size * 4, 1)
+                self.att_weight_cq = Linear(hidden_size * 4, 1)
 
             self.layers.append(self.att_weight_c)
             self.layers.append(self.att_weight_q)
@@ -92,23 +107,54 @@ class EncoderBiRNN(nn.Module):
 
         # self.rel_pos_embed = nn.Embedding(S,positional_embedding_size)
 
-        #   5.   Output Layer
-        self.content = nn.Linear(2*hidden_size, 1, bias=False)
-        self.layers.append(self.content)
-        self.salience = nn.Bilinear(2*hidden_size, 2*hidden_size, 1, bias=False)
-        self.layers.append(self.salience)
-        self.novelty = nn.Bilinear(2*hidden_size, 2*hidden_size, 1, bias=False)
-        self.layers.append(self.novelty)
-        if self.use_coattention is True:
-            self.attention_and_query = nn.Linear(12 * hidden_size, hidden_size, bias=False)
-            self.layers.append(self.attention_and_query)
-            self.prob_attention = nn.Linear(hidden_size, 1, bias=False)
-            self.layers.append(self.prob_attention)
-        self.abs_pos = nn.Linear(self.positional_embedding_size, 1, bias=False)
-        self.layers.append(self.abs_pos)
-        # self.rel_pos = nn.Linear(positional_embedding_size, 1, bias=False)
-        self.bias = nn.Parameter(torch.FloatTensor(1).uniform_(-0.1,0.1))
+        if use_keywords is True:
+            #   5.   Output Layer
+            self.content = nn.Linear(4 * hidden_size, 1, bias=False)
+            self.layers.append(self.content)
+            self.salience = nn.Bilinear(4 * hidden_size, 4 * hidden_size, 1, bias=False)
+            self.layers.append(self.salience)
+            self.novelty = nn.Bilinear(4 * hidden_size, 4 * hidden_size, 1, bias=False)
+            self.layers.append(self.novelty)
+            if self.use_coattention is True:
+                self.attention_and_query = nn.Linear(24 * hidden_size, hidden_size, bias=False)
+                self.layers.append(self.attention_and_query)
+                self.prob_attention = nn.Linear(hidden_size, 1, bias=False)
+                self.layers.append(self.prob_attention)
+            self.abs_pos = nn.Linear(self.positional_embedding_size, 1, bias=False)
+            self.layers.append(self.abs_pos)
+            # self.rel_pos = nn.Linear(positional_embedding_size, 1, bias=False)
+            self.bias = nn.Parameter(torch.FloatTensor(1).uniform_(-0.1, 0.1))
 
+            ############## classification layer
+            if self.use_coattention is True:
+                self.cls_layer = nn.Linear(4 * hidden_size + 5, 2, bias=False)
+            else:
+                self.cls_layer = nn.Linear(4 * hidden_size + 4, 2, bias=False)
+            #####################################
+        else:
+            #   5.   Output Layer
+            self.content = nn.Linear(2*hidden_size, 1, bias=False)
+            self.layers.append(self.content)
+            self.salience = nn.Bilinear(2*hidden_size, 2*hidden_size, 1, bias=False)
+            self.layers.append(self.salience)
+            self.novelty = nn.Bilinear(2*hidden_size, 2*hidden_size, 1, bias=False)
+            self.layers.append(self.novelty)
+            if self.use_coattention is True:
+                self.attention_and_query = nn.Linear(12 * hidden_size, hidden_size, bias=False)
+                self.layers.append(self.attention_and_query)
+                self.prob_attention = nn.Linear(hidden_size, 1, bias=False)
+                self.layers.append(self.prob_attention)
+            self.abs_pos = nn.Linear(self.positional_embedding_size, 1, bias=False)
+            self.layers.append(self.abs_pos)
+            # self.rel_pos = nn.Linear(positional_embedding_size, 1, bias=False)
+            self.bias = nn.Parameter(torch.FloatTensor(1).uniform_(-0.1,0.1))
+
+            ############## classification layer
+            if self.use_coattention is True:
+                self.cls_layer = nn.Linear(2 * hidden_size + 5, 2, bias=False)
+            else:
+                self.cls_layer = nn.Linear(2 * hidden_size + 4, 2, bias=False)
+            #####################################
 
         if device is None:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -135,7 +181,10 @@ class EncoderBiRNN(nn.Module):
         out = torch.cat(out).squeeze(2)
         return out
 
-    def forward(self, comments, max_num_sentences, max_len, num_sentences, sequnce_lens, post, post_max_num_sentences, post_max_len, post_num_sentences, post_sequnce_lens):
+    def forward(self, comments, max_num_sentences, max_len, num_sentences, sequnce_lens,
+                post, post_max_num_sentences, post_max_len, post_num_sentences, post_sequnce_lens,
+                comment_keywords=None, comment_keywords_max_num_sentences=None, comment_keywords_max_len=None, comment_keywords_num_sentences=None, comment_keywords_sequnce_lens=None,
+                post_keywords=None, post_keywords_max_num_sentences=None, post_keywords_max_len=None, post_keywords_num_sentences=None, post_keywords_sequnce_lens=None):
         def att_flow_layer(c, q):
             """
             :param c: (batch, c_len, hidden_size * 2)
@@ -184,6 +233,23 @@ class EncoderBiRNN(nn.Module):
             x = torch.cat([c, c2q_att, c * c2q_att, c * q2c_att], dim=-1)
             return x
 
+        def highway_network(x1, x2):
+            """
+            :param x1: (batch, seq_len, char_channel_size)
+            :param x2: (batch, seq_len, word_dim)
+            :return: (batch, seq_len, hidden_size * 2)
+            """
+            # (batch, seq_len, char_channel_size + word_dim)
+            x = torch.cat([x1, x2], dim=-1)
+            h = self.highway_linear_1(x)
+            g = self.highway_gate_1(x)
+            x = g * h + (1 - g) * x
+            h = self.highway_linear_2(x)
+            g = self.highway_gate_2(x)
+            x = g * h + (1 - g) * x
+            # (batch, seq_len, hidden_size * 2)
+            return x
+
         def sentence_embedding_layer(_word_embeddings, _seq_lengths):
             _sents_emb = None
             for i in range(len(_word_embeddings[0, :, 0, 0])):
@@ -212,6 +278,12 @@ class EncoderBiRNN(nn.Module):
             #################  Process post  #############################################
             post_doc_embedding, post_bi_sent_embeddings = doc_embedding_layer(post, post_num_sentences)
             #####################################################################################
+
+            if self.use_keywords and comment_keywords is not None and post_keywords is not None:
+                comment_keyword_doc_embedding, comment_keyword_bi_sent_embeddings = doc_embedding_layer(comment_keywords, num_sentences)
+                #################  Process post  #############################################
+                post_keyword_doc_embedding, post_keyword_bi_sent_embeddings = doc_embedding_layer(post_keywords, post_num_sentences)
+                #####################################################################################
         else:
             word_embeddings = self.embedding_layer(comments)
             ''' number of sentences in document =  len(word_embeddings[0,:,0,0]) '''
@@ -220,20 +292,42 @@ class EncoderBiRNN(nn.Module):
             sentence_embeddings = sentence_embedding_layer(word_embeddings, sequnce_lens)
             doc_embedding, bi_sent_embeddings = doc_embedding_layer(sentence_embeddings, num_sentences)
 
-
             #################  Process post  #############################################
             post_embeddings = self.embedding_layer(post)
-
             post_sentence_embeddings = sentence_embedding_layer(post_embeddings, post_sequnce_lens)
             post_doc_embedding, post_bi_sent_embeddings = doc_embedding_layer(post_sentence_embeddings, post_num_sentences)
             #####################################################################################
+
+            if self.use_keywords and comment_keywords is not None and post_keywords is not None:
+                comment_keywords_embeddings = self.embedding_layer(comment_keywords)
+                comment_keyword_sentence_embeddings = sentence_embedding_layer(comment_keywords_embeddings, comment_keywords_sequnce_lens)
+                comment_keyword_doc_embedding, comment_keyword_bi_sent_embeddings = doc_embedding_layer(comment_keyword_sentence_embeddings, comment_keywords_num_sentences)
+
+                #################  Process post  #############################################
+                post_keyword_embeddings = self.embedding_layer(post_keywords)
+                post_keyword_sentence_embeddings = sentence_embedding_layer(post_keyword_embeddings, post_keywords_sequnce_lens)
+                post_keyword_doc_embedding, post_keyword_bi_sent_embeddings = doc_embedding_layer(post_keyword_sentence_embeddings, post_keywords_num_sentences)
+                #####################################################################################
+
+        if self.use_keywords and comment_keywords is not None and post_keywords is not None:
+            bi_sent_embeddings = highway_network(bi_sent_embeddings, comment_keyword_bi_sent_embeddings)
+            post_bi_sent_embeddings = highway_network(post_bi_sent_embeddings, post_keyword_bi_sent_embeddings)
+
+            doc_embedding = highway_network(doc_embedding, comment_keyword_doc_embedding)
+            post_doc_embedding = highway_network(post_doc_embedding, post_keyword_doc_embedding)
+
         if self.use_coattention is True:
             attention_vec = att_flow_layer(bi_sent_embeddings, post_bi_sent_embeddings)
 
-        s = Variable(torch.zeros(doc_count, 2 * self.hidden_size))
+        if self.use_keywords is True:
+            s = Variable(torch.zeros(doc_count, 4 * self.hidden_size))
+        else:
+            s = Variable(torch.zeros(doc_count, 2 * self.hidden_size))
+
         if self.device.type == 'cuda':
             s = s.cuda()
         probs = []
+        clss = []
         for i in range(len(bi_sent_embeddings[0,:,0])):
             ######## Positional feature #########
             abs_index = Variable(torch.LongTensor([[i + 1] if i <= num_sentences[j] else [0] for j in range(doc_count)]))
@@ -252,11 +346,18 @@ class EncoderBiRNN(nn.Module):
             # rel_p = self.rel_pos(rel_features)
             if self.use_coattention is True:
                 prob = torch.sigmoid(content + salience + novelty + abs_p + attn_prob + self.bias)
+                cls = self.cls_layer(torch.cat((bi_sent_embeddings[:,i,:], attn_prob, content, salience, novelty, abs_p), 1))
             else:
                 prob = torch.sigmoid(content + salience + novelty + abs_p + self.bias)
+                cls = self.cls_layer(torch.cat((bi_sent_embeddings[:,i,:], content, salience, novelty, abs_p), 1))
+
             s = s + prob * bi_sent_embeddings[:,i,:]
             probs.append(prob)
-        return torch.cat(probs,1)
+            clss.append(cls)
+        # clss_tensor = clss[0]
+        # for x in clss:
+        #     clss_tensor = torch.stack((clss_tensor, x), 1)
+        return torch.cat(probs,1), torch.stack(clss, 1)
 
 
 

@@ -5,7 +5,7 @@ def init_model(params, vocab_size):
     summRunnerModel = EncoderBiRNN(params['batch_size'], vocab_size, params['embedding_size'], params['hidden_size'],
                                    max_num_sentence=params['max_num_sentences'], device=params['device'], use_bert=params['use_BERT'],
                                    num_bert_layers=len(params['BERT_layers']), bert_embedding_size=params['BERT_embedding_size'],
-                                   use_coattention=params['use_coattention'])
+                                   use_coattention=params['use_coattention'], use_keywords=params['use_keywords'])
     if params['device'].type == 'cuda':
         summRunnerModel.cuda()
     return summRunnerModel
@@ -24,8 +24,9 @@ def save_model(model, optimizer, path, params):
 
 def load_model(optimizer, path, device):
     f = open(path, 'rb')
-    state = torch.load(f)
+    state = torch.load(f, map_location=device.type)
     params = state['params']
+    params['device'] = device
     model = init_model(params, params['vocab_size'])
     optimizer = torch.optim.Adam(model.parameters(), lr=params['lr'])
 

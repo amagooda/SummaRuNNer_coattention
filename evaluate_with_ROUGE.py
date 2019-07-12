@@ -10,7 +10,7 @@ from cytoolz import curry
 import codecs
 import shutil
 
-_ROUGE_PATH = '/mnt/e/Work/Summarization_Codes/pyrouge/tools/ROUGE-1.5.5'
+_ROUGE_PATH = '/mnt/e/Work/Ahmed/Summarization/pyrouge/tools/ROUGE-1.5.5'
 
 
 def read_summaries(file_path):
@@ -45,7 +45,7 @@ def eval_rouge(dec_pattern, dec_dir, ref_pattern, ref_dir, dir_name,
     assert _ROUGE_PATH is not None
     log.get_global_console_logger().setLevel(logging.WARNING)
     # with tempfile.TemporaryDirectory() as tmp_dir:
-    tmp_dir = '/mnt/e/Work/Summarization_samples/SummRunner_V2/output/{}/temp/'.format(dir_name)
+    tmp_dir = '/mnt/e/Work/Ahmed/Summarization/SummRuNNer/output/{}/temp/'.format(dir_name)
 
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
@@ -72,13 +72,13 @@ def main():
     max_rouge_index = 0
     max_rouge = 0
     max_output = ''
-    dir_name = '20_25_forum_tune_guf'
+    dir_name = '30_75_forum_keywords2_bert_coatt_keywords'
     print('Evaluatiig {} ....'.format(dir_name))
     for i in range(50):
-        dec_dir = '/mnt/e/Work/Summarization_samples/SummRunner_V2/output/{}/test_{}/dec/'.format(dir_name, i)
-        ref_dir = '/mnt/e/Work/Summarization_samples/SummRunner_V2/output/{}/test_{}/ref_abs/'.format(dir_name, i)
+        dec_dir = '/mnt/e/Work/Ahmed/Summarization/SummRuNNer/output/{}/test_{}/dec/'.format(dir_name, i)
+        ref_dir = '/mnt/e/Work/Ahmed/Summarization/SummRuNNer/output/{}/test_{}/ref_abs/'.format(dir_name, i)
 
-        if not os.path.exists('/mnt/e/Work/Summarization_samples/SummRunner_V2/output/{}/test_{}/dec/'.format(dir_name, i)):
+        if not os.path.exists('/mnt/e/Work/Ahmed/Summarization/SummRuNNer/output/{}/test_{}/dec/'.format(dir_name, i)):
             continue
 
         dec_pattern = r'(\d+).dec'

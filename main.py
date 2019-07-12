@@ -23,48 +23,49 @@ import codecs
 params = {}
 ############ Data params
 params['DATA_Path'] = '/mnt/Summarization/SummRunner_V2/cnn_data/finished_files/'  # './forum_data/data_V2/Parsed_Data.xml'
-params['data_set_name'] = 'forum'
+params['data_set_name'] = 'forum_keywords'
 ############ Model params
 params['use_coattention'] = False
-params['use_BERT'] = False
+params['use_BERT'] = True
+params['use_cross_entropy_loss'] = True
+params['use_keywords'] = True
 params['BERT_Model_Path'] = '../pytorch-pretrained-BERT/bert_models/uncased_L-12_H-768_A-12/'
 params['BERT_embedding_size'] = 768
-params['BERT_layers'] = [-1]
+params['BERT_layers'] = [-1, -2]
 
 params['embedding_size'] = 64
 params['hidden_size'] = 128
-params['batch_size'] = 8
+params['batch_size'] = 4
 params['max_num_sentences'] = 20
 params['lr'] = 0.001
 params['vocab_size'] = 70000
 params['use_back_translation'] = False
 params['back_translation_file'] = None
-params['Global_max_sequence_length'] = 25
-params['Global_max_num_sentences'] = 20
+params['Global_max_sequence_length'] = 75
+params['Global_max_num_sentences'] = 30
 ############ logging params
-params['num_epochs'] = 50
+params['num_epochs'] = 100
 params['start_epoch'] = 0
 params['write_summarizes'] = True
 params['output_dir'] = './output/'
 params['save_model'] = True
-params['save_model_path'] = './checkpoint/models/'
-params['load_model'] = True
-params['reinit_embeddings'] = True
-params['load_model_path'] = './checkpoint/bilstm_model_cnn_19.pkl'
+params['save_model_path'] = './checkpoint/models_2/'
+params['load_model'] = False
+params['reinit_embeddings'] = False
+params['load_model_path'] = './checkpoint/models/forum_tune_guf/model_forum_30_75_coatt_bert_2_0.pkl'
 ############ device
 params['device'] = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # params['device'] = torch.device('cpu')
 ###########################
 params['task'] = 'Train'  ### Train, Test
 params['write_post_fix'] = '0'
-params['tune_postfix'] = '_tune_guf'
-params['gradual_unfreezing'] = True
+params['tune_postfix'] = ''
+params['gradual_unfreezing'] = False
 
 ######################################################
 
 
-def train(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, gradual_unfreezing=False):
-
+def train(data_path, summRunnerModel, optimizer, criterion, epoch, gradual_unfreezing=False):
     summRunnerModel.train()
 
     if gradual_unfreezing is True:
@@ -87,13 +88,19 @@ def train(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, g
     for part in glob.glob(data_path):
         print('Loading training data part {}'.format(part))
 
-        with open(part, "rb") as output_file:
+        with open(part, "rb") as read_data_file:
             if params['use_back_translation'] is True:
-                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, comments_translated, posts_translated] = pickle.load(output_file)
-            else:
-                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part] = pickle.load(output_file)
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, posts_translated, comments_translated] = pickle.load(read_data_file)
+            elif params['use_keywords'] is True:
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, post_keywords, comment_keywords] = pickle.load(read_data_file)
                 comments_translated = None
                 posts_translated = None
+            else:
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part] = pickle.load(read_data_file)
+                comments_translated = None
+                posts_translated = None
+                post_keywords = None
+                comment_keywords = None
 
         # data_set = Dataset(part, params['use_back_translation'])
         # data_generator = torch.utils.data.DataLoader(data_set, **parameters)
@@ -102,9 +109,22 @@ def train(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, g
                                                                                                                                                                                     human_summaries_part,
                                                                                                                                                                                     sentence_str_part, params['batch_size'],
                                                                                                                                                                                     use_back_translation=params['use_back_translation'],
-                                                                                                                                                                                    all_posts_translated=comments_translated,
-                                                                                                                                                                                    all_comments_translated=posts_translated)
+                                                                                                                                                                                    all_posts_translated=posts_translated,
+                                                                                                                                                                                    all_comments_translated=comments_translated)
             pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, posts_translated_batches, comments_translated_batches))
+        elif params['use_keywords'] is True:
+            posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches = dL.batchify_data(posts_part, comments_part, answers_part,
+                                                                                                                             human_summaries_part,
+                                                                                                                             sentence_str_part, params['batch_size'],
+                                                                                                                             use_back_translation=params['use_back_translation'],
+                                                                                                                             all_posts_translated=posts_translated,
+                                                                                                                             all_comments_translated=comments_translated,
+                                                                                                                             extract_keywords=params['use_keywords'],
+                                                                                                                             all_post_keywords=post_keywords,
+                                                                                                                             all_comment_keywords=comment_keywords)
+
+            pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches))
+
         else:
             posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches = dL.batchify_data(posts_part, comments_part, answers_part,
                                                                                                                              human_summaries_part,
@@ -113,29 +133,59 @@ def train(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, g
                                                                                                                              all_posts_translated=comments_translated,
                                                                                                                              all_comments_translated=posts_translated)
             pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, posts_batches, comments_batches))
+
         batch_index = 1
-        for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_translated_batch, comment_translated_batch in pbar:
-            pbar.set_description("Training {}/{}, loss={}".format(batch_index, len(posts_batches), round(float(epoch_loss) / float(num_batches), 4)))
-            if params['use_BERT'] is True:
-                comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
-                post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
 
-            else:
-                comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
-                post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+        if params['use_keywords']:
+            for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_keywords_batch, comment_keywords_batch in pbar:
+                pbar.set_description("Training {}/{}, loss={}".format(batch_index, len(posts_batches), round(float(epoch_loss) / float(num_batches), 4)))
+                if params['use_BERT'] is True:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    comment_keywords_batch, max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths = dL.pad_batch_BERT(comment_keywords_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_keywords_batch, posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths = dL.pad_batch_BERT(post_keywords_batch, params['BERT_layers'], params['BERT_embedding_size'])
 
-            loss = trainer.train_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch,
-                                       max_sentences, max_length, no_padding_sentences, no_padding_lengths,
-                                       posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
-                                       optimizer, criterion, params['use_BERT'])
+                else:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+                    comment_keywords_batch, max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths = dL.pad_data_batch(comment_keywords_batch)
+                    post_keywords_batch, posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths = dL.pad_data_batch(post_keywords_batch)
 
-            epoch_loss += loss
-            num_batches += 1
-            batch_index += 1
+                loss = trainer.train_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch,
+                                           max_sentences, max_length, no_padding_sentences, no_padding_lengths,
+                                           posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
+                                           comment_keywords_batch, post_keywords_batch,
+                                           max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths,
+                                           posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths,
+                                           optimizer, criterion, params['use_BERT'], use_cross_entropy_loss=params['use_cross_entropy_loss'], use_keywords=params['use_keywords'])
+
+                epoch_loss += loss
+                num_batches += 1
+                batch_index += 1
+        else:
+            for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_translated_batch, comment_translated_batch in pbar:
+                pbar.set_description("Training {}/{}, loss={}".format(batch_index, len(posts_batches), round(float(epoch_loss) / float(num_batches), 4)))
+                if params['use_BERT'] is True:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+
+                else:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+
+                loss = trainer.train_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch,
+                                           max_sentences, max_length, no_padding_sentences, no_padding_lengths,
+                                           posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
+                                           None, None, None, None, None, None, None, None, None, None,
+                                           optimizer, criterion, params['use_BERT'], use_cross_entropy_loss=params['use_cross_entropy_loss'], use_keywords=params['use_keywords'])
+
+                epoch_loss += loss
+                num_batches += 1
+                batch_index += 1
     print('Epoch {} Total training Loss {}'.format(epoch, round(float(epoch_loss) / float(num_batches), 4)))
 
 
-def validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, best_validation_loss):
+def validate(data_path, summRunnerModel, optimizer, criterion, epoch, best_validation_loss):
     # print('Validating Epoch {}'.format(epoch))
     # data_path = '/checkpoint/{}_{}_*.bert.bin'.format(params['data_set_name'], 'val')
     summRunnerModel.eval()
@@ -144,13 +194,19 @@ def validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch
 
     for part in glob.glob(data_path):
         print('Loading validation data part {}'.format(part))
-        with open(part, "rb") as output_file:
+        with open(part, "rb") as read_data_file:
             if params['use_back_translation'] is True:
-                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, comments_translated, posts_translated] = pickle.load(output_file)
-            else:
-                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part] = pickle.load(output_file)
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, comments_translated, posts_translated] = pickle.load(read_data_file)
+            elif params['use_keywords'] is True:
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, post_keywords, comment_keywords] = pickle.load(read_data_file)
                 comments_translated = None
                 posts_translated = None
+            else:
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part] = pickle.load(read_data_file)
+                comments_translated = None
+                posts_translated = None
+                post_keywords = None
+                comment_keywords = None
 
         # data_set = Dataset(part, params['use_back_translation'])
         # data_generator = torch.utils.data.DataLoader(data_set, **parameters)
@@ -162,6 +218,18 @@ def validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch
                                                                                                                                                                                     all_posts_translated=comments_translated,
                                                                                                                                                                                     all_comments_translated=posts_translated)
             pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, posts_translated_batches, comments_translated_batches))
+        elif params['use_keywords'] is True:
+            posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches = dL.batchify_data(posts_part, comments_part, answers_part,
+                                                                                                                             human_summaries_part,
+                                                                                                                             sentence_str_part, params['batch_size'],
+                                                                                                                             use_back_translation=params['use_back_translation'],
+                                                                                                                             all_posts_translated=comments_translated,
+                                                                                                                             all_comments_translated=posts_translated,
+                                                                                                                             extract_keywords=params['use_keywords'],
+                                                                                                                             all_post_keywords=post_keywords,
+                                                                                                                             all_comment_keywords=comment_keywords)
+
+            pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches))
         else:
             posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches = dL.batchify_data(posts_part, comments_part, answers_part,
                                                                                                                              human_summaries_part,
@@ -170,25 +238,55 @@ def validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch
                                                                                                                              all_posts_translated=comments_translated,
                                                                                                                              all_comments_translated=posts_translated)
             pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, posts_batches, comments_batches))
+
         batch_index = 1
-        for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_translated_batch, comment_translated_batch in pbar:
-            pbar.set_description("Validation {}/{}, loss={}".format(batch_index, len(posts_batches), round(float(validation_loss) / float(num_batches), 4)))
 
-            if params['use_BERT'] is True:
-                comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
-                post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+        if params['use_keywords']:
+            for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_keywords_batch, comment_keywords_batch in pbar:
+                pbar.set_description("Validation {}/{}, loss={}".format(batch_index, len(posts_batches), round(float(validation_loss) / float(num_batches), 4)))
+                if params['use_BERT'] is True:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    comment_keywords_batch, max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths = dL.pad_batch_BERT(comment_keywords_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_keywords_batch, posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths = dL.pad_batch_BERT(post_keywords_batch, params['BERT_layers'], params['BERT_embedding_size'])
 
-            else:
-                comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
-                post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+                else:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+                    comment_keywords_batch, max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths = dL.pad_data_batch(comment_keywords_batch)
+                    post_keywords_batch, posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths = dL.pad_data_batch(post_keywords_batch)
 
-            loss = trainer.val_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch,
-                                     max_sentences, max_length, no_padding_sentences, no_padding_lengths,
-                                     posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
-                                     criterion, params['use_BERT'])
-            validation_loss += loss
-            num_batches += 1
-            batch_index += 1
+                loss = trainer.val_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch,
+                                         max_sentences, max_length, no_padding_sentences, no_padding_lengths,
+                                         posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
+                                         comment_keywords_batch, post_keywords_batch,
+                                         max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths,
+                                         posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths,
+                                         criterion, params['use_BERT'], use_cross_entropy_loss=params['use_cross_entropy_loss'], use_keywords=params['use_keywords'])
+
+                validation_loss += loss
+                num_batches += 1
+                batch_index += 1
+        else:
+            for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_translated_batch, comment_translated_batch in pbar:
+                pbar.set_description("Validation {}/{}, loss={}".format(batch_index, len(posts_batches), round(float(validation_loss) / float(num_batches), 4)))
+
+                if params['use_BERT'] is True:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+
+                else:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+
+                loss = trainer.val_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch,
+                                         max_sentences, max_length, no_padding_sentences, no_padding_lengths,
+                                         posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
+                                         None, None, None, None, None, None, None, None, None, None,
+                                         criterion, params['use_BERT'], use_cross_entropy_loss=params['use_cross_entropy_loss'], use_keywords=params['use_keywords'])
+                validation_loss += loss
+                num_batches += 1
+                batch_index += 1
 
     print('Epoch {} Total validation Loss {}'.format(epoch, round(float(validation_loss) / float(num_batches), 4)))
     validation_loss = float(validation_loss) / float(num_batches)
@@ -202,6 +300,8 @@ def validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch
         save_model_path += '_bt'
     if params['use_coattention'] is True:
         save_model_path += '_coatt'
+    if params['use_keywords'] is True:
+        save_model_path += '_keywords'
     if params['use_BERT'] is True:
         save_model_path += '_bert'
         save_model_path += '_{}'.format(len(params['BERT_layers']))
@@ -219,7 +319,7 @@ def validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch
     return best_validation_loss
 
 
-def evaluate(data_path, output_dir, summRunnerModel, parameters):
+def evaluate(data_path, output_dir, summRunnerModel):
     # output_dir = params['output_dir'] + '/test_{}/'.format(epoch)
     summRunnerModel.eval()
     if not os.path.exists(output_dir):
@@ -236,10 +336,16 @@ def evaluate(data_path, output_dir, summRunnerModel, parameters):
         with open(part, "rb") as output_file:
             if params['use_back_translation'] is True:
                 [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, comments_translated, posts_translated] = pickle.load(output_file)
+            elif params['use_keywords'] is True:
+                [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part, post_keywords, comment_keywords] = pickle.load(output_file)
+                comments_translated = None
+                posts_translated = None
             else:
                 [posts_part, comments_part, answers_part, human_summaries_part, sentence_str_part] = pickle.load(output_file)
                 comments_translated = None
                 posts_translated = None
+                post_keywords = None
+                comment_keywords = None
 
         # data_set = Dataset(part, params['use_back_translation'])
         # data_generator = torch.utils.data.DataLoader(data_set, **parameters)
@@ -251,6 +357,18 @@ def evaluate(data_path, output_dir, summRunnerModel, parameters):
                                                                                                                                                                                     all_posts_translated=comments_translated,
                                                                                                                                                                                     all_comments_translated=posts_translated)
             pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, posts_translated_batches, comments_translated_batches))
+        elif params['use_keywords'] is True:
+            posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches = dL.batchify_data(posts_part, comments_part, answers_part,
+                                                                                                                             human_summaries_part,
+                                                                                                                             sentence_str_part, params['batch_size'],
+                                                                                                                             use_back_translation=params['use_back_translation'],
+                                                                                                                             all_posts_translated=comments_translated,
+                                                                                                                             all_comments_translated=posts_translated,
+                                                                                                                             extract_keywords=params['use_keywords'],
+                                                                                                                             all_post_keywords=post_keywords,
+                                                                                                                             all_comment_keywords=comment_keywords)
+
+            pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, post_keywords_batches, comment_keywords_batches))
         else:
             posts_batches, comments_batches, answer_batches, human_summary_batches, sentences_str_batches = dL.batchify_data(posts_part, comments_part, answers_part,
                                                                                                                              human_summaries_part,
@@ -259,35 +377,79 @@ def evaluate(data_path, output_dir, summRunnerModel, parameters):
                                                                                                                              all_posts_translated=comments_translated,
                                                                                                                              all_comments_translated=posts_translated)
             pbar = tqdm(zip(posts_batches, comments_batches, human_summary_batches, answer_batches, sentences_str_batches, posts_batches, comments_batches))
-        batch_index = 1
-        for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_translated_batch, comment_translated_batch in pbar:
-            pbar.set_description("Evaluating using testing data {}/{}".format(batch_index, len(posts_batches)))
-            batch_index += 1
-            if params['use_BERT'] is True:
-                comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
-                post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
 
-            else:
-                comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
-                post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
 
-            predicted_sentences, target_sentences, human_summaries = trainer.test_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch, human_summary_batch, sentence_str_batch,
-                                                                                        max_sentences, max_length, no_padding_sentences, no_padding_lengths,
-                                                                                        posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths, params['use_BERT'])
 
-            for predicted, target, human in zip(predicted_sentences, target_sentences, human_summaries):
-                write_predicted = codecs.open(output_dir + '/dec/{}.dec'.format(sample_index), 'w', encoding='utf8')
-                write_ref_extractive = codecs.open(output_dir + '/ref/{}.ref'.format(sample_index), 'w', encoding='utf8')
-                write_ref_abstractive = codecs.open(output_dir + '/ref_abs/{}.ref'.format(sample_index), 'w', encoding='utf8')
+        if params['use_keywords']:
+            batch_index = 1
+            for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_keywords_batch, comment_keywords_batch in pbar:
+                pbar.set_description("Evaluating using testing data {}/{}".format(batch_index, len(posts_batches)))
+                batch_index += 1
+                if params['use_BERT'] is True:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    comment_keywords_batch, max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths = dL.pad_batch_BERT(comment_keywords_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_keywords_batch, posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths = dL.pad_batch_BERT(post_keywords_batch, params['BERT_layers'], params['BERT_embedding_size'])
 
-                write_predicted.write(predicted)
-                write_ref_extractive.write(target)
-                write_ref_abstractive.write(human)
+                else:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+                    comment_keywords_batch, max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths = dL.pad_data_batch(comment_keywords_batch)
+                    post_keywords_batch, posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths = dL.pad_data_batch(post_keywords_batch)
 
-                write_predicted.close()
-                write_ref_extractive.close()
-                write_ref_abstractive.close()
-                sample_index += 1
+                predicted_sentences, target_sentences, human_summaries = trainer.test_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch, human_summary_batch, sentence_str_batch,
+                                                                                            max_sentences, max_length, no_padding_sentences, no_padding_lengths,
+                                                                                            posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
+                                                                                            comment_keywords_batch, post_keywords_batch,
+                                                                                            max_keywords_sentences, max_keywords_length, no_keywords_padding_sentences, no_keywords_padding_lengths,
+                                                                                            posts_keywords_max_sentences, posts_keywords_max_length, posts_keywords_no_padding_sentences, posts_keywords_no_padding_lengths,
+                                                                                            params['use_BERT'], use_cross_entropy_loss=params['use_cross_entropy_loss'], use_keywords=params['use_keywords'])
+
+                for predicted, target, human in zip(predicted_sentences, target_sentences, human_summaries):
+                    write_predicted = codecs.open(output_dir + '/dec/{}.dec'.format(sample_index), 'w', encoding='utf8')
+                    write_ref_extractive = codecs.open(output_dir + '/ref/{}.ref'.format(sample_index), 'w', encoding='utf8')
+                    write_ref_abstractive = codecs.open(output_dir + '/ref_abs/{}.ref'.format(sample_index), 'w', encoding='utf8')
+
+                    write_predicted.write(predicted)
+                    write_ref_extractive.write(target)
+                    write_ref_abstractive.write(human)
+
+                    write_predicted.close()
+                    write_ref_extractive.close()
+                    write_ref_abstractive.close()
+                    sample_index += 1
+        else:
+            batch_index = 1
+            for post_batch, comment_batch, human_summary_batch, answer_batch, sentence_str_batch, post_translated_batch, comment_translated_batch in pbar:
+                pbar.set_description("Evaluating using testing data {}/{}".format(batch_index, len(posts_batches)))
+                batch_index += 1
+                if params['use_BERT'] is True:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_batch_BERT(comment_batch, params['BERT_layers'], params['BERT_embedding_size'])
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_batch_BERT(post_batch, params['BERT_layers'], params['BERT_embedding_size'])
+
+                else:
+                    comment_batch, max_sentences, max_length, no_padding_sentences, no_padding_lengths = dL.pad_data_batch(comment_batch)
+                    post_batch, posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths = dL.pad_data_batch(post_batch)
+
+                predicted_sentences, target_sentences, human_summaries = trainer.test_batch(summRunnerModel, params['device'], post_batch, comment_batch, answer_batch, human_summary_batch, sentence_str_batch,
+                                                                                            max_sentences, max_length, no_padding_sentences, no_padding_lengths,
+                                                                                            posts_max_sentences, posts_max_length, posts_no_padding_sentences, posts_no_padding_lengths,
+                                                                                            None, None, None, None, None, None, None, None, None, None,
+                                                                                            params['use_BERT'], use_cross_entropy_loss=params['use_cross_entropy_loss'], use_keywords=params['use_keywords'])
+
+                for predicted, target, human in zip(predicted_sentences, target_sentences, human_summaries):
+                    write_predicted = codecs.open(output_dir + '/dec/{}.dec'.format(sample_index), 'w', encoding='utf8')
+                    write_ref_extractive = codecs.open(output_dir + '/ref/{}.ref'.format(sample_index), 'w', encoding='utf8')
+                    write_ref_abstractive = codecs.open(output_dir + '/ref_abs/{}.ref'.format(sample_index), 'w', encoding='utf8')
+
+                    write_predicted.write(predicted)
+                    write_ref_extractive.write(target)
+                    write_ref_abstractive.write(human)
+
+                    write_predicted.close()
+                    write_ref_extractive.close()
+                    write_ref_abstractive.close()
+                    sample_index += 1
 
 
 def main():
@@ -328,8 +490,6 @@ def main():
         if params['device'].type == 'cuda':
             summRunnerModel.cuda()
 
-    # Parameters
-    parameters = {'batch_size': params['batch_size'], 'shuffle': False, 'num_workers': 4}
 
     best_validation_loss = math.inf
     best_model_epoch = 0
@@ -346,7 +506,7 @@ def main():
                 print('No training data found, make sure you preprocessed the data first')
                 exit()
             else:
-                train(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, gradual_unfreezing=params['gradual_unfreezing'])
+                train(data_path, summRunnerModel, optimizer, criterion, epoch, gradual_unfreezing=params['gradual_unfreezing'])
 
             ########################### Validation ################################################
             print('Validating Epoch {}'.format(epoch))
@@ -359,7 +519,7 @@ def main():
             if len(parts) == 0:
                 print('No validation data found, make sure you preprocessed the data first')
             else:
-                best_validation_loss = validate(data_path, summRunnerModel, optimizer, criterion, parameters, epoch, best_validation_loss)
+                best_validation_loss = validate(data_path, summRunnerModel, optimizer, criterion, epoch, best_validation_loss)
 
             ########################### Test ################################################
             print('Evaluating using testing data Epoch {}'.format(epoch))
@@ -374,6 +534,8 @@ def main():
                 output_dir += '{}_bert'.format(len(params['BERT_layers']))
             if params['use_coattention'] is True:
                 output_dir += '_coatt'
+            if params['use_keywords'] is True:
+                output_dir += '_keywords'
             output_dir += '/'
 
             if not os.path.exists(output_dir):
@@ -384,7 +546,7 @@ def main():
             if len(parts) == 0:
                 print('No testing data found, make sure you preprocessed the data first')
             else:
-                evaluate(data_path, output_dir, summRunnerModel, parameters)
+                evaluate(data_path, output_dir, summRunnerModel)
 
             #############################################################################################################################################################
             print('Evaluating using validation data Epoch {}'.format(epoch))
@@ -399,6 +561,8 @@ def main():
                 output_dir += '{}_bert'.format(len(params['BERT_layers']))
             if params['use_coattention'] is True:
                 output_dir += '_coatt'
+            if params['use_keywords'] is True:
+                output_dir += '_keywords'
             output_dir += '/'
 
             if not os.path.exists(output_dir):
@@ -409,7 +573,7 @@ def main():
             if len(parts) == 0:
                 print('No validation data found, make sure you preprocessed the data first')
             else:
-                evaluate(data_path, output_dir, summRunnerModel, parameters)
+                evaluate(data_path, output_dir, summRunnerModel)
 
     elif params['task'] == 'Test':
 
@@ -426,6 +590,8 @@ def main():
             output_dir += '{}_bert'.format(len(params['BERT_layers']))
         if params['use_coattention'] is True:
             output_dir += '_coatt'
+        if params['use_keywords'] is True:
+            output_dir += '_keywords'
         output_dir += '/'
 
         if not os.path.exists(output_dir):
@@ -436,7 +602,7 @@ def main():
         if len(parts) == 0:
             print('No testing data found, make sure you preprocessed the data first')
         else:
-            evaluate(data_path, output_dir, summRunnerModel, parameters)
+            evaluate(data_path, output_dir, summRunnerModel)
 
 
 if __name__ == '__main__':

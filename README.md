@@ -1,5 +1,8 @@
-#Implementation of SummaRuNNer Papers with modificatios for discussion Thread and github summarization:
-Paper: https://arxiv.org/pdf/1611.04230.pdf
+#Implementation of the paper "Attend to the beginning: A study on using bidirectional attention for extractivesummarization" To appear in (FLAIRS33).
+https://arxiv.org/pdf/2002.03405.pdf
+
+
+It is a modification for the original SummaRuNNer Paper (https://arxiv.org/pdf/1611.04230.pdf) for discussion Thread summarization.
 
 ##1- Modifications
 ###a- Post to comment Co-attention:

@@ -2,7 +2,7 @@
 https://arxiv.org/pdf/2002.03405.pdf
 
 
-It is a modification for the original SummaRuNNer Paper (https://arxiv.org/pdf/1611.04230.pdf) for discussion Thread summarization.
+It is a modification of the original SummaRuNNer Paper (https://arxiv.org/pdf/1611.04230.pdf) for discussion Thread summarization.
 
 ##1- Modifications
 ###a- Post to comment Co-attention:
